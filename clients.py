@@ -32,9 +32,9 @@ st.markdown("""
     .block-container {
         padding-top: 2rem;
     }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+    #MainMenu {visibility: hidden; display: none;}
+    footer {visibility: hidden; display: none;}
+    header {visibility: hidden; display: none;}
     </style>
     """, unsafe_allow_html=True)
 
