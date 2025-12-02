@@ -142,8 +142,11 @@ def render_social_listening_form(brand_name, competitors, key_prefix):
                 if kw_input and len(st.session_state[f"{key_prefix}_keywords"]) < 10:
                     if kw_input not in st.session_state[f"{key_prefix}_keywords"]:
                         st.session_state[f"{key_prefix}_keywords"].append(kw_input)
-                        st.rerun() # Rerun to clear input (Streamlit reset hack usually involves callbacks or rerun)
-        
+                        st.session_state[f"{key_prefix}_kw_input_field"] = "" # Clear input
+                        st.rerun()
+                    else:
+                        st.warning("Keyword already exists!")
+
         # Display Keywords Table
         if st.session_state[f"{key_prefix}_keywords"]:
             st.markdown("**Keywords List**")
@@ -162,7 +165,10 @@ def render_social_listening_form(brand_name, competitors, key_prefix):
                 if ht_input and len(st.session_state[f"{key_prefix}_hashtags"]) < 10:
                     if ht_input not in st.session_state[f"{key_prefix}_hashtags"]:
                         st.session_state[f"{key_prefix}_hashtags"].append(ht_input)
+                        st.session_state[f"{key_prefix}_ht_input_field"] = "" # Clear input
                         st.rerun()
+                    else:
+                        st.warning("Hashtag already exists!")
 
         # Display Hashtags Table
         if st.session_state[f"{key_prefix}_hashtags"]:

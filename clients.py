@@ -40,27 +40,133 @@ st.markdown("""
 
 def generate_excel(record):
     flat_data = []
-    for b in record.get("brands", []):
-        row = {
-            "Organization": record.get("organization"),
-            "Type": record.get("type"),
-            "Date": record.get("onboard_date") or record.get("presentation_date"),
-            "Brand": b.get("name"),
-            "Reports": ", ".join(record.get("reports", []))
-        }
-        # Add some detailed data if needed, or just keep high level for the summary view
-        # The user asked for "data view", usually implies the table we show.
-        # Let's try to include more details if possible, or just the summary table.
-        # Given the complexity of nested JSON, flattening everything into one sheet is hard.
-        # Let's stick to the summary table format used in Clients Details for consistency, 
-        # but maybe we can add a second sheet with raw JSON if needed? 
-        # For now, let's stick to the flattening used in Clients Details.
-        flat_data.append(row)
     
+    org = record.get("organization", "")
+    exec_name = record.get("executive_name", "")
+    rec_type = record.get("type", "")
+    date = record.get("onboard_date") or record.get("presentation_date")
+    reports_list = ", ".join(record.get("reports", []))
+
+    for b in record.get("brands", []):
+        brand_name = b.get("name", "")
+        b_data = b.get("data", {})
+        
+        # Base row data
+        base_row = {
+            "Executive Name": exec_name,
+            "Organization": org,
+            "Type": rec_type,
+            "Date": date,
+            "Brand": brand_name,
+            "Reports Selected": reports_list
+        }
+        
+        # 1. Competitor Analysis
+        comp_analysis = b_data.get("competitor_analysis", {})
+        
+        # Brand Socials
+        brand_socials = comp_analysis.get("brand_socials", {})
+        for platform, link in brand_socials.items():
+            row = base_row.copy()
+            row["Category"] = "Brand Socials"
+            row["Sub-Category"] = platform.capitalize()
+            row["Detail"] = link
+            flat_data.append(row)
+            
+        # Competitors
+        competitors = comp_analysis.get("competitors", [])
+        for i, comp in enumerate(competitors):
+            c_name = comp.get("name", f"Competitor {i+1}")
+            c_socials = comp.get("socials", {})
+            for platform, link in c_socials.items():
+                row = base_row.copy()
+                row["Category"] = "Competitor Analysis"
+                row["Sub-Category"] = f"{c_name} - {platform.capitalize()}"
+                row["Detail"] = link
+                flat_data.append(row)
+
+        # 2. Google Trends
+        g_trends = b_data.get("google_trends", {})
+        if g_trends:
+            row = base_row.copy()
+            row["Category"] = "Google Trends"
+            row["Sub-Category"] = "Link"
+            row["Detail"] = g_trends.get("link", "")
+            flat_data.append(row)
+            
+            row = base_row.copy()
+            row["Category"] = "Google Trends"
+            row["Sub-Category"] = "Search Terms"
+            row["Detail"] = g_trends.get("search_terms", "")
+            flat_data.append(row)
+
+        # 3. Web Traffic
+        web_traffic = b_data.get("web_traffic", {})
+        if web_traffic:
+            selected_comps = web_traffic.get("selected_competitors", [])
+            row = base_row.copy()
+            row["Category"] = "Web Traffic"
+            row["Sub-Category"] = "Selected Competitors"
+            row["Detail"] = ", ".join(selected_comps)
+            flat_data.append(row)
+
+        # 4. Social Listening
+        social_listening = b_data.get("social_listening", {})
+        if social_listening.get("enabled"):
+            brand_health = social_listening.get("brand_health", {})
+            
+            # Keywords
+            keywords = brand_health.get("keywords", [])
+            if keywords:
+                row = base_row.copy()
+                row["Category"] = "Social Listening"
+                row["Sub-Category"] = "Keywords"
+                row["Detail"] = ", ".join(keywords)
+                flat_data.append(row)
+                
+            # Hashtags
+            hashtags = brand_health.get("hashtags", [])
+            if hashtags:
+                row = base_row.copy()
+                row["Category"] = "Social Listening"
+                row["Sub-Category"] = "Hashtags"
+                row["Detail"] = ", ".join(hashtags)
+                flat_data.append(row)
+
+        # 5. Platform Access (Meta, GA, etc.)
+        # These are usually stored as direct keys in b_data if I recall correctly how ui_components returns them?
+        # Let's check ui_components.py or how they are saved. 
+        # In clients.py (previous version), they were saved as:
+        # brand_data["meta_platform"] = ui_components.render_platform_access_form(...)
+        
+        platform_keys = ["meta_platform", "google_analytics", "meta_campaigns", "google_ads"]
+        for pk in platform_keys:
+            p_data = b_data.get(pk)
+            if p_data:
+                row = base_row.copy()
+                row["Category"] = "Platform Access"
+                row["Sub-Category"] = pk.replace("_", " ").title()
+                row["Detail"] = p_data
+                flat_data.append(row)
+
+    if not flat_data:
+        # If no detailed data, at least return the base info
+        flat_data.append({
+            "Executive Name": exec_name,
+            "Organization": org,
+            "Type": rec_type,
+            "Date": date,
+            "Brand": "",
+            "Reports Selected": reports_list,
+            "Category": "No Data",
+            "Sub-Category": "",
+            "Detail": ""
+        })
+
     df = pd.DataFrame(flat_data)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Summary')
+        df.to_excel(writer, index=False, sheet_name='Detailed Data')
     
     return buffer
 
@@ -75,188 +181,177 @@ def main():
     if choice == "Onboard Client":
         st.header("Onboard New Client")
         
-        # Removed st.form to allow dynamic buttons
-        org_name, brands = ui_components.render_brand_input("onboard")
+        # 1. Data Entry Executive Name (Compulsory)
+        executive_name = st.text_input("Data Entry Executive Name *", key="onboard_exec_name")
         
-        report_options = [
-            "Competitor Analysis", "Google Trends", "Web Traffic", 
-            "Social Listening", "Meta Platform", "Google Analytics", 
-            "Meta Campaigns", "Google Ads"
-        ]
-        selected_reports = st.multiselect("Select Reports", report_options)
-        
-        # Container for all brand data
-        all_brand_data = {}
-
-        if brands:
-            for brand in brands:
-                st.markdown(f"---")
-                st.subheader(f"Details for Brand: {brand}")
-                brand_data = {}
+        if executive_name:
+            st.success(f"Executive: {executive_name}")
+            
+            # 2. Organization Name & Brands
+            org_name, brands = ui_components.render_brand_input("onboard")
+            
+            if org_name:
+                st.info(f"Organization: {org_name}")
                 
-                # Competitor Analysis (Foundation for others)
-                if "Competitor Analysis" in selected_reports:
-                    brand_data["competitor_analysis"] = ui_components.render_competitor_analysis_form(brand, f"onboard_{brand}")
-                
-                # Store competitors for later use in other forms
-                competitors = brand_data.get("competitor_analysis", {}).get("competitors", [])
+                if brands and any(b.strip() for b in brands):
+                    st.write(f"**Brands**: {', '.join([b for b in brands if b.strip()])}")
+                    
+                    report_options = [
+                        "Competitor Analysis", "Google Trends", "Web Traffic", 
+                        "Social Listening", "Meta Platform", "Google Analytics", 
+                        "Meta Campaigns", "Google Ads"
+                    ]
+                    selected_reports = st.multiselect("Select Reports", report_options)
+                    
+                    # Container for all brand data
+                    all_brand_data = {}
+            
+                    for brand in brands:
+                        if not brand.strip():
+                            continue
+                            
+                        st.markdown(f"---")
+                        st.subheader(f"Details for Brand: {brand}")
+                        brand_data = {}
+                        
+                        # Competitor Analysis
+                        if "Competitor Analysis" in selected_reports:
+                            brand_data["competitor_analysis"] = ui_components.render_competitor_analysis_form(brand, f"onboard_{brand}")
+                            if brand_data["competitor_analysis"]:
+                                with st.expander(f"View Entered Competitor Data for {brand}"):
+                                    st.json(brand_data["competitor_analysis"])
+                        
+                        competitors = brand_data.get("competitor_analysis", {}).get("competitors", [])
 
-                if "Google Trends" in selected_reports:
-                    brand_data["google_trends"] = ui_components.render_google_trends_form(brand, f"onboard_{brand}")
-                    
-                if "Web Traffic" in selected_reports:
-                    brand_data["web_traffic"] = ui_components.render_web_traffic_form(brand, competitors, f"onboard_{brand}")
-                    
-                if "Social Listening" in selected_reports:
-                    brand_data["social_listening"] = ui_components.render_social_listening_form(brand, competitors, f"onboard_{brand}")
-                    
-                if "Meta Platform" in selected_reports:
-                    brand_data["meta_platform"] = ui_components.render_platform_access_form(brand, "Meta Platform", f"onboard_{brand}")
-                    
-                if "Google Analytics" in selected_reports:
-                    brand_data["google_analytics"] = ui_components.render_platform_access_form(brand, "Google Analytics", f"onboard_{brand}")
-                    
-                if "Meta Campaigns" in selected_reports:
-                    brand_data["meta_campaigns"] = ui_components.render_platform_access_form(brand, "Meta Campaigns", f"onboard_{brand}")
-                    
-                if "Google Ads" in selected_reports:
-                    brand_data["google_ads"] = ui_components.render_platform_access_form(brand, "Google Ads", f"onboard_{brand}")
+                        if "Google Trends" in selected_reports:
+                            brand_data["google_trends"] = ui_components.render_google_trends_form(brand, f"onboard_{brand}")
+                            
+                        if "Web Traffic" in selected_reports:
+                            brand_data["web_traffic"] = ui_components.render_web_traffic_form(brand, competitors, f"onboard_{brand}")
+                            
+                        if "Social Listening" in selected_reports:
+                            brand_data["social_listening"] = ui_components.render_social_listening_form(brand, competitors, f"onboard_{brand}")
+                            
+                        if "Meta Platform" in selected_reports:
+                            brand_data["meta_platform"] = ui_components.render_platform_access_form(brand, "Meta Platform", f"onboard_{brand}")
+                            
+                        if "Google Analytics" in selected_reports:
+                            brand_data["google_analytics"] = ui_components.render_platform_access_form(brand, "Google Analytics", f"onboard_{brand}")
+                            
+                        if "Meta Campaigns" in selected_reports:
+                            brand_data["meta_campaigns"] = ui_components.render_platform_access_form(brand, "Meta Campaigns", f"onboard_{brand}")
+                            
+                        if "Google Ads" in selected_reports:
+                            brand_data["google_ads"] = ui_components.render_platform_access_form(brand, "Google Ads", f"onboard_{brand}")
 
-                all_brand_data[brand] = brand_data
+                        all_brand_data[brand] = brand_data
 
-        onboard_date = st.date_input("Client Onboard Date")
-        
-        submitted = st.button("Save Data", type="primary")
-        
-        if submitted:
-            if not org_name or not brands:
-                st.error("Please enter Organization Name and at least one Brand.")
+                    onboard_date = st.date_input("Client Onboard Date")
+                    
+                    if st.button("Save Data", type="primary"):
+                        client_record = {
+                            "executive_name": executive_name,
+                            "organization": org_name,
+                            "brands": [{"name": b, "data": all_brand_data.get(b, {})} for b in brands if b.strip()],
+                            "reports": selected_reports,
+                            "onboard_date": str(onboard_date),
+                            "type": "onboard"
+                        }
+                        
+                        data_manager.add_client_record(client_record)
+                        st.success("Client Onboarded Successfully!")
+                        st.json(client_record)
+                        
+                        excel_data = generate_excel(client_record)
+                        st.download_button(
+                            label="Download Excel",
+                            data=excel_data,
+                            file_name=f"{org_name}_onboard.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="onboard_download"
+                        )
+                else:
+                    st.warning("Please add at least one Brand to proceed.")
             else:
-                client_record = {
-                    "type": "onboard",
-                    "organization": org_name,
-                    "brands": [],
-                    "onboard_date": onboard_date.isoformat(),
-                    "reports": selected_reports
-                }
-                
-                for brand, data in all_brand_data.items():
-                    client_record["brands"].append({
-                        "name": brand,
-                        "data": data
-                    })
-                
-                data_manager.add_client_record(client_record)
-                st.success("Client Onboarded Successfully!")
-                st.json(client_record) # Display graphical view (JSON for now)
-                
-                # Excel Export
-                excel_data = generate_excel(client_record)
-                st.download_button(
-                    label="Download Excel",
-                    data=excel_data,
-                    file_name=f"{org_name}_onboard.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="onboard_download"
-                )
-
-        if st.button("Reset Form"):
-            # Clear session state keys related to onboarding
-            keys_to_clear = [k for k in st.session_state.keys() if k.startswith("onboard_")]
-            for k in keys_to_clear:
-                del st.session_state[k]
-            st.rerun()
+                st.warning("Please enter Organization Name to proceed.")
+        else:
+            st.warning("Please enter Data Entry Executive Name to start.")
 
     elif choice == "Pitch Client":
         st.header("Pitch New Client")
         
-        # Removed st.form to allow dynamic buttons
-        org_name, brands = ui_components.render_brand_input("pitch")
+        # 1. Data Entry Executive Name (Compulsory)
+        executive_name = st.text_input("Data Entry Executive Name *", key="pitch_exec_name")
         
-        report_options = [
-            "Competitor Analysis", "Google Trends", "Web Traffic", 
-            "Social Listening", "Meta Platform", "Google Analytics", 
-            "Meta Campaigns", "Google Ads"
-        ]
-        selected_reports = st.multiselect("Select Reports", report_options, key="pitch_reports")
-        
-        all_brand_data = {}
-
-        if brands:
-            for brand in brands:
-                st.markdown(f"---")
-                st.subheader(f"Details for Brand: {brand}")
-                brand_data = {}
+        if executive_name:
+            st.success(f"Executive: {executive_name}")
+            
+            # 2. Organization & Brands
+            org_name, brands = ui_components.render_brand_input("pitch")
+            
+            if org_name:
+                st.info(f"Organization: {org_name}")
                 
-                if "Competitor Analysis" in selected_reports:
-                    brand_data["competitor_analysis"] = ui_components.render_competitor_analysis_form(brand, f"pitch_{brand}")
-                
-                competitors = brand_data.get("competitor_analysis", {}).get("competitors", [])
+                if brands and any(b.strip() for b in brands):
+                    st.write(f"**Brands**: {', '.join([b for b in brands if b.strip()])}")
+                    
+                    presentation_date = st.date_input("Client Presentation Date")
+                    
+                    # Restricted reports for Pitch
+                    report_options = ["Competitor Analysis", "Social Listening"]
+                    selected_reports = st.multiselect("Select Reports", report_options, key="pitch_reports")
+                    
+                    all_brand_data = {}
+            
+                    for brand in brands:
+                        if not brand.strip():
+                            continue
+                            
+                        st.markdown(f"---")
+                        st.subheader(f"Details for Brand: {brand}")
+                        brand_data = {}
+                        
+                        if "Competitor Analysis" in selected_reports:
+                            brand_data["competitor_analysis"] = ui_components.render_competitor_analysis_form(brand, f"pitch_{brand}")
+                            if brand_data["competitor_analysis"]:
+                                with st.expander(f"View Entered Competitor Data for {brand}"):
+                                    st.json(brand_data["competitor_analysis"])
+                        
+                        competitors = brand_data.get("competitor_analysis", {}).get("competitors", [])
 
-                if "Google Trends" in selected_reports:
-                    brand_data["google_trends"] = ui_components.render_google_trends_form(brand, f"pitch_{brand}")
-                    
-                if "Web Traffic" in selected_reports:
-                    brand_data["web_traffic"] = ui_components.render_web_traffic_form(brand, competitors, f"pitch_{brand}")
-                    
-                if "Social Listening" in selected_reports:
-                    brand_data["social_listening"] = ui_components.render_social_listening_form(brand, competitors, f"pitch_{brand}")
-                    
-                if "Meta Platform" in selected_reports:
-                    brand_data["meta_platform"] = ui_components.render_platform_access_form(brand, "Meta Platform", f"pitch_{brand}")
-                    
-                if "Google Analytics" in selected_reports:
-                    brand_data["google_analytics"] = ui_components.render_platform_access_form(brand, "Google Analytics", f"pitch_{brand}")
-                    
-                if "Meta Campaigns" in selected_reports:
-                    brand_data["meta_campaigns"] = ui_components.render_platform_access_form(brand, "Meta Campaigns", f"pitch_{brand}")
-                    
-                if "Google Ads" in selected_reports:
-                    brand_data["google_ads"] = ui_components.render_platform_access_form(brand, "Google Ads", f"pitch_{brand}")
+                        if "Social Listening" in selected_reports:
+                            brand_data["social_listening"] = ui_components.render_social_listening_form(brand, competitors, f"pitch_{brand}")
 
-                all_brand_data[brand] = brand_data
+                        all_brand_data[brand] = brand_data
 
-        presentation_date = st.date_input("Client Presentation Date")
-        
-        submitted = st.button("Save Data", type="primary", key="pitch_save")
-        
-        if submitted:
-            if not org_name or not brands:
-                st.error("Please enter Organization Name and at least one Brand.")
+                    if st.button("Save Pitch Data", type="primary"):
+                        client_record = {
+                            "executive_name": executive_name,
+                            "organization": org_name,
+                            "brands": [{"name": b, "data": all_brand_data.get(b, {})} for b in brands if b.strip()],
+                            "reports": selected_reports,
+                            "presentation_date": str(presentation_date),
+                            "type": "pitch"
+                        }
+                        
+                        data_manager.add_client_record(client_record)
+                        st.success("Pitch Data Saved Successfully!")
+                        st.json(client_record)
+                        
+                        excel_data = generate_excel(client_record)
+                        st.download_button(
+                            label="Download Excel",
+                            data=excel_data,
+                            file_name=f"{org_name}_pitch.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="pitch_download"
+                        )
+                else:
+                    st.warning("Please add at least one Brand to proceed.")
             else:
-                client_record = {
-                    "type": "pitch",
-                    "organization": org_name,
-                    "brands": [],
-                    "presentation_date": presentation_date.isoformat(),
-                    "reports": selected_reports
-                }
-                
-                for brand, data in all_brand_data.items():
-                    client_record["brands"].append({
-                        "name": brand,
-                        "data": data
-                    })
-                
-                data_manager.add_client_record(client_record)
-                st.success("Pitch Data Saved Successfully!")
-                st.json(client_record)
-                
-                # Excel Export
-                excel_data = generate_excel(client_record)
-                st.download_button(
-                    label="Download Excel",
-                    data=excel_data,
-                    file_name=f"{org_name}_pitch.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="pitch_download"
-                )
-
-        if st.button("Reset Form", key="pitch_reset"):
-            keys_to_clear = [k for k in st.session_state.keys() if k.startswith("pitch_")]
-            for k in keys_to_clear:
-                del st.session_state[k]
-            st.rerun()
+                st.warning("Please enter Organization Name to proceed.")
+        else:
+            st.warning("Please enter Data Entry Executive Name to start.")
 
     elif choice == "Update Client":
         st.header("Update Existing Client (Add Brand)")
