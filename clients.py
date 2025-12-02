@@ -72,9 +72,6 @@ def main():
     if choice == "Onboard Client":
         st.header("Onboard New Client")
         
-    if choice == "Onboard Client":
-        st.header("Onboard New Client")
-        
         # Removed st.form to allow dynamic buttons
         org_name, brands = ui_components.render_brand_input("onboard")
         
