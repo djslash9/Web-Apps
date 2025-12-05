@@ -34,7 +34,7 @@ st.markdown("""
     }
     #MainMenu {visibility: hidden; display: none;}
     footer {visibility: hidden; display: none;}
-    header {visibility: hidden; display: none;}
+    /* header {visibility: hidden; display: none;} - Removed to keep sidebar toggle visible */
     </style>
     """, unsafe_allow_html=True)
 
